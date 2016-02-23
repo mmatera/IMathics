@@ -1,5 +1,6 @@
 import sys
 import traceback
+import logging
 
 from ipykernel.kernelbase import Kernel
 
@@ -11,8 +12,18 @@ from mathics import settings
 from mathics.version import __version__
 from mathics.doc.doc import Doc
 
+from IPython.display import Image, SVG
+from IPython.display import Latex, HTML,Javascript
+import IPython.display as ip_display
+
+
+
 
 class MathicsKernel(Kernel):
+    import re 
+    svg_open_tag = re.compile('<mtable><mtr><mtd><svg')
+    svg_close_tag = re.compile('</svg></mtd></mtr></mtable>')
+
     implementation = 'Mathics'
     implementation_version = __version__
     language_version = '0.1'    # TODO
@@ -21,14 +32,32 @@ class MathicsKernel(Kernel):
         'mimetype': 'text/x-mathematica',
     }
     banner = "Mathics kernel"   # TODO
-
+    
     def __init__(self, **kwargs):
+        self.mathjax_initialized = False
         Kernel.__init__(self, **kwargs)
+        if self.log is None:
+            # This occurs if we call as a stand-alone kernel
+            # (eg, not as a process)
+            # FIXME: take care of input/output, eg StringIO
+            #        make work without a session
+            self.log = logging.Logger("NotebookApp")
+
         self.definitions = Definitions(add_builtin=True)        # TODO Cache
         self.definitions.set_ownvalue('$Line', Integer(0))  # Reset the line number
 
+
     def do_execute(self, code, silent, store_history=True, user_expressions=None,
                    allow_stdin=False):
+        #Initialize mathjax... It should be a beter place to do it inside the imathics kernel
+        if not self.mathjax_initialized:
+            self.mathjax_initialized = True
+            self.Display(Javascript(''' 
+               MathJax.Hub.Config({jax: ["input/TeX","input/MathML","input/AsciiMath","output/HTML-CSS","output/NativeMML",
+               "output/PreviewHTML"],extensions: ["tex2jax.js","mml2jax.js","asciimath2jax.js","MathMenu.js","MathZoom.js",
+               "fast-preview.js", "AssistiveMML.js"],TeX: { extensions: ["AMSmath.js","AMSsymbols.js","noErrors.js",
+               "noUndefined.js"]}});''',
+                                    lib="https://cdn.mathjax.org/mathjax/latest/MathJax.js"))
         # TODO update user definitions
 
         response = {
@@ -38,7 +67,7 @@ class MathicsKernel(Kernel):
 
         try:
             evaluation = Evaluation(code, self.definitions, out_callback=self.out_callback,
-                                    timeout=settings.TIMEOUT)
+                                    timeout=settings.TIMEOUT,format="xml")
         except Exception as exc:
             response['status'] = 'error'
             response['ename'] = 'System:exception'
@@ -51,10 +80,14 @@ class MathicsKernel(Kernel):
         if not silent:
             for result in evaluation.results:
                 if result.result is not None:
+                    xmlchain = result.result
+                    xmlchain= svg_open_tag.sub("<mtable><mtr><mtd><annotation-xml encoding=\"text/html\" ><svg",xmlchain)
+                    xmlchain= svg_close_tag.sub("</svg></annotation-xml></mtd></mtr></mtable>",xmlchain)
                     data = {
-                        'text/plain': result.result,
+                        'text/html': xmlchain,
                         # TODO html / mathjax output
                     }
+                    
                     content = {'execution_count': result.line_no, 'data': data, 'metadata': {}}
                     self.send_response(self.iopub_socket, 'execute_result', content)
 
@@ -123,3 +156,70 @@ class MathicsKernel(Kernel):
             return {'status': 'incomplete', 'indent': 4 * len(stack) * ' '}
         else:
             return {'status': 'complete'}
+
+
+#Borrowed from metakernel package    
+    def repr(self, item):
+        return repr(item)
+
+#Borrowed from metakernel package    
+    def Display(self, *args, **kwargs):
+        clear_output = kwargs.get("clear_output", False)
+        for message in args:
+            if isinstance(message, HTML):
+                if clear_output:
+                    self.send_response(self.iopub_socket, 'clear_output',
+                                       {'wait': True})
+            # if Widget and isinstance(message, Widget):
+            #     self.log.debug('Display Widget')
+            #     self._ipy_formatter(message)
+            else:
+                self.log.debug('Display Data')
+                try:
+                    data = _formatter(message, self.repr)
+                except Exception as e:
+                    self.Error(e)
+                    return
+                self.send_response(self.iopub_socket, 'display_data',
+                                   {'data': data,
+                                    'metadata': dict()})
+
+#Borrowed from metakernel package    
+def _formatter(data, repr_func):
+    reprs = {}
+    reprs['text/plain'] = repr_func(data)
+
+    lut = [("_repr_png_", "image/png"),
+           ("_repr_jpeg_", "image/jpeg"),
+           ("_repr_html_", "text/html"),
+           ("_repr_markdown_", "text/markdown"),
+           ("_repr_svg_", "image/svg+xml"),
+           ("_repr_latex_", "text/latex"),
+           ("_repr_json_", "application/json"),
+           ("_repr_javascript_", "application/javascript"),
+           ("_repr_pdf_", "application/pdf")]
+
+    for (attr, mimetype) in lut:
+        obj = getattr(data, attr, None)
+        if obj:
+            reprs[mimetype] = obj
+
+    retval = {}
+    for (mimetype, value) in reprs.items():
+        try:
+            value = value()
+        except Exception:
+            pass
+        if not value:
+            continue
+        if isinstance(value, bytes):
+            try:
+                value = value.decode('utf-8')
+            except Exception:
+                value = base64.encodestring(value)
+                value = value.decode('utf-8')
+        try:
+            retval[mimetype] = str(value)
+        except:
+            retval[mimetype] = value
+    return retval
