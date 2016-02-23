@@ -81,8 +81,8 @@ class MathicsKernel(Kernel):
             for result in evaluation.results:
                 if result.result is not None:
                     xmlchain = result.result
-                    xmlchain= svg_open_tag.sub("<mtable><mtr><mtd><annotation-xml encoding=\"text/html\" ><svg",xmlchain)
-                    xmlchain= svg_close_tag.sub("</svg></annotation-xml></mtd></mtr></mtable>",xmlchain)
+                    xmlchain= MathicsKernel.svg_open_tag.sub("<mtable><mtr><mtd><annotation-xml encoding=\"text/html\" ><svg",xmlchain)
+                    xmlchain= MathicsKernel.svg_close_tag.sub("</svg></annotation-xml></mtd></mtr></mtable>",xmlchain)
                     data = {
                         'text/html': xmlchain,
                         # TODO html / mathjax output
