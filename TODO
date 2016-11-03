@@ -1,0 +1,6 @@
+
+
+* Improve support for Mathics
+* Fix the issue with jupyterhub
+* Add support for "Manipulate"-like objects
+* Improve the graphics handling.
